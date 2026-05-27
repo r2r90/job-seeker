@@ -21,7 +21,7 @@ export class EmailService {
       },
       connectionTimeout: 10000,
       socketTimeout: 10000,
-    });
+    } as any);
   }
 
   async sendJobNotification(jobs: LinkedinJob[]): Promise<void> {
