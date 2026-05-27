@@ -2,37 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { LinkedinJob } from './linkedin.interface';
+import { ILE_DE_FRANCE_CITIES, REMOTE_KEYWORDS } from './idf-cities.constant';
 
 const JSEARCH_HOST = 'jsearch.p.rapidapi.com';
-
-// Villes et communes d'Île-de-France (75, 77, 78, 91, 92, 93, 94, 95)
-const ILE_DE_FRANCE_CITIES = new Set([
-  'paris',
-  // Hauts-de-Seine (92)
-  'nanterre', 'boulogne-billancourt', 'issy-les-moulineaux', 'levallois-perret',
-  'antony', 'colombes', 'asnières-sur-seine', 'neuilly-sur-seine', 'clichy',
-  'rueil-malmaison', 'saint-cloud', 'courbevoie', 'puteaux', 'gennevilliers',
-  'montrouge', 'châtillon', 'malakoff', 'vanves', 'sceaux', 'bagneux',
-  // Seine-Saint-Denis (93)
-  'saint-denis', 'montreuil', 'aubervilliers', 'aulnay-sous-bois', 'pantin',
-  'bobigny', 'épinay-sur-seine', 'drancy', 'noisy-le-grand', 'bondy',
-  'le blanc-mesnil', 'rosny-sous-bois', 'bagnolet',
-  // Val-de-Marne (94)
-  'créteil', 'vitry-sur-seine', 'champigny-sur-marne', 'saint-maur-des-fossés',
-  'vincennes', 'ivry-sur-seine', 'maisons-alfort', 'alfortville', 'charenton-le-pont',
-  'nogent-sur-marne', 'joinville-le-pont', 'fontenay-sous-bois',
-  // Yvelines (78)
-  'versailles', 'saint-germain-en-laye', 'mantes-la-jolie', 'rambouillet',
-  'guyancourt', 'vélizy-villacoublay', 'poissy', 'sartrouville',
-  // Essonne (91)
-  'évry', 'évry-courcouronnes', 'corbeil-essonnes', 'massy', 'palaiseau',
-  'longjumeau', 'gif-sur-yvette', 'orsay',
-  // Val-d\'Oise (95)
-  'cergy', 'argenteuil', 'sarcelles', 'pontoise', 'ermont', 'garges-lès-gonesse',
-  'eaubonne', 'enghien-les-bains',
-  // Seine-et-Marne (77)
-  'melun', 'meaux', 'fontainebleau', 'chelles', 'torcy', 'lognes',
-]);
+const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class LinkedinService {
@@ -44,49 +17,49 @@ export class LinkedinService {
     const apiKey = this.configService.get<string>('RAPIDAPI_KEY');
     const country = this.configService.get<string>('SEARCH_COUNTRY', 'fr');
     const language = this.configService.get<string>('SEARCH_LANGUAGE', 'fr');
-
-    // SEARCH_KEYWORDS peut contenir plusieurs filtres séparés par virgule
-    // ex: "Node.js, NestJS, Nest.js, Node"
-    const rawKeywords = this.configService.get<string>('SEARCH_KEYWORDS', '');
-    const filters = rawKeywords
-      .split(',')
-      .map((k) => k.trim())
-      .filter(Boolean);
+    const keywords = this.parseKeywords(this.configService.get<string>('SEARCH_KEYWORDS', ''));
 
     if (!apiKey) {
       this.logger.error('RAPIDAPI_KEY non configurée');
       return [];
     }
-
-    if (filters.length === 0) {
+    if (keywords.length === 0) {
       this.logger.error('SEARCH_KEYWORDS est vide');
       return [];
     }
 
-    // Appels parallèles — un par filtre
     const results = await Promise.allSettled(
-      filters.map((keyword) => this.fetchByKeyword(keyword, country, language, apiKey)),
+      keywords.map((kw) => this.fetchByKeyword(kw, country, language, apiKey)),
     );
 
-    // Fusionner et dédupliquer par job_id
-    const seen = new Set<string>();
-    const merged: LinkedinJob[] = [];
+    const merged = this.dedup(results);
+    const filtered = merged
+      .filter((job) => this.isInIleDeFrance(job))
+      .filter((job) => this.isRecent(job.postedAt));
 
+    this.logger.log(
+      `[${keywords.join(' | ')}] → ${merged.length} brutes, ${filtered.length} retenues`,
+    );
+    return filtered;
+  }
+
+  private parseKeywords(raw: string): string[] {
+    return raw.split(',').map((k) => k.trim()).filter(Boolean);
+  }
+
+  private dedup(results: PromiseSettledResult<LinkedinJob[]>[]): LinkedinJob[] {
+    const seen = new Set<string>();
+    const jobs: LinkedinJob[] = [];
     for (const result of results) {
       if (result.status === 'rejected') continue;
       for (const job of result.value) {
         if (!seen.has(job.id)) {
           seen.add(job.id);
-          merged.push(job);
+          jobs.push(job);
         }
       }
     }
-
-    const filtered = merged.filter((job) => this.isInIleDeFrance(job));
-    this.logger.log(
-      `[${filters.join(' | ')}] → ${merged.length} brutes, ${filtered.length} en Île-de-France`,
-    );
-    return filtered;
+    return jobs;
   }
 
   private async fetchByKeyword(
@@ -95,16 +68,22 @@ export class LinkedinService {
     language: string,
     apiKey: string,
   ): Promise<LinkedinJob[]> {
-    const query = `${keyword} Paris Île-de-France`;
     try {
       const response = await axios.get(`https://${JSEARCH_HOST}/search-v2`, {
-        params: { query, country, language, page: 1, num_pages: 1, date_posted: 'today' },
+        params: {
+          query: `${keyword} Paris Île-de-France`,
+          country,
+          language,
+          page: 1,
+          num_pages: 1,
+          date_posted: 'today',
+        },
         headers: { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': JSEARCH_HOST },
         timeout: 15000,
       });
       if (response.data?.status !== 'OK') return [];
-      const jobs = response.data.data?.jobs ?? response.data.data ?? [];
-      return this.parseJobs(jobs);
+      const raw = response.data.data?.jobs ?? response.data.data ?? [];
+      return this.parseJobs(raw);
     } catch (error: any) {
       this.logger.error(`Erreur pour "${keyword}": ${error?.message}`);
       return [];
@@ -112,15 +91,15 @@ export class LinkedinService {
   }
 
   private isInIleDeFrance(job: LinkedinJob): boolean {
-    // Offre localisée en Île-de-France
     if (job.rawCity) {
       return ILE_DE_FRANCE_CITIES.has(job.rawCity.toLowerCase().trim());
     }
+    const title = job.title.toLowerCase();
+    return REMOTE_KEYWORDS.some((kw) => title.includes(kw));
+  }
 
-    // job_city null → remote ou hybride : accepter si le titre le mentionne explicitement
-    const REMOTE_KEYWORDS = ['remote', 'hybride', 'hybrid', 'télétravail', 'teletravail', 'full remote'];
-    const titleLower = job.title.toLowerCase();
-    return REMOTE_KEYWORDS.some((kw) => titleLower.includes(kw));
+  private isRecent(postedAt: string): boolean {
+    return Date.now() - new Date(postedAt).getTime() <= MAX_AGE_MS;
   }
 
   private parseJobs(data: any[]): LinkedinJob[] {
@@ -128,8 +107,7 @@ export class LinkedinService {
       this.logger.warn('Format de réponse inattendu de JSearch');
       return [];
     }
-
-    return data.map((item: any) => ({
+    return data.map((item) => ({
       id: item.job_id,
       title: item.job_title ?? 'Sans titre',
       company: item.employer_name ?? 'Inconnu',
