@@ -14,6 +14,7 @@ export class EmailService {
       host: this.configService.get<string>('SMTP_HOST'),
       port: smtpPort,
       secure: smtpPort === 465,
+      family: 4,
       auth: {
         user: this.configService.get<string>('SMTP_USER'),
         pass: this.configService.get<string>('SMTP_PASS'),
