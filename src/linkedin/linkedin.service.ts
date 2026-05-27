@@ -97,12 +97,13 @@ export class LinkedinService {
   ): Promise<LinkedinJob[]> {
     const query = `${keyword} Paris Île-de-France`;
     try {
-      const response = await axios.get(`https://${JSEARCH_HOST}/search`, {
+      const response = await axios.get(`https://${JSEARCH_HOST}/search-v2`, {
         params: { query, country, language, page: 1, num_pages: 1, date_posted: 'today' },
         headers: { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': JSEARCH_HOST },
       });
       if (response.data?.status !== 'OK') return [];
-      return this.parseJobs(response.data.data ?? []);
+      const jobs = response.data.data?.jobs ?? response.data.data ?? [];
+      return this.parseJobs(jobs);
     } catch (error: any) {
       this.logger.error(`Erreur pour "${keyword}": ${error?.message}`);
       return [];
