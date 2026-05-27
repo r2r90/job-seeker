@@ -1,5 +1,7 @@
 export const ILE_DE_FRANCE_CITIES = new Set([
-  'paris',
+  // Noms régionaux retournés par JSearch
+  'paris', 'île-de-france', 'ile-de-france', 'greater paris', 'paris region',
+  'paris, île-de-france', 'paris, france', 'region parisienne', 'région parisienne',
   // Hauts-de-Seine (92)
   'nanterre', 'boulogne-billancourt', 'issy-les-moulineaux', 'levallois-perret',
   'antony', 'colombes', 'asnières-sur-seine', 'neuilly-sur-seine', 'clichy',

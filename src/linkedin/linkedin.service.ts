@@ -33,12 +33,12 @@ export class LinkedinService {
     );
 
     const merged = this.dedup(results);
-    const filtered = merged
-      .filter((job) => this.isInIleDeFrance(job))
-      .filter((job) => this.isRecent(job.postedAt));
+    const afterIdf = merged.filter((job) => this.isInIleDeFrance(job));
+    const filtered = afterIdf.filter((job) => this.isRecent(job.postedAt));
 
+    const cities = [...new Set(merged.map((j) => j.rawCity ?? 'null'))].join(', ');
     this.logger.log(
-      `[${keywords.join(' | ')}] → ${merged.length} brutes, ${filtered.length} retenues`,
+      `[${keywords.join(' | ')}] → ${merged.length} brutes, ${afterIdf.length} IDF, ${filtered.length} <24h | cities: ${cities}`,
     );
     return filtered;
   }
