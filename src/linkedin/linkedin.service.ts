@@ -100,6 +100,7 @@ export class LinkedinService {
       const response = await axios.get(`https://${JSEARCH_HOST}/search-v2`, {
         params: { query, country, language, page: 1, num_pages: 1, date_posted: 'today' },
         headers: { 'x-rapidapi-key': apiKey, 'x-rapidapi-host': JSEARCH_HOST },
+        timeout: 15000,
       });
       if (response.data?.status !== 'OK') return [];
       const jobs = response.data.data?.jobs ?? response.data.data ?? [];
