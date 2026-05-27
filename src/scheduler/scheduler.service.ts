@@ -1,24 +1,17 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { LinkedinService } from '../linkedin/linkedin.service';
 import { EmailService } from '../email/email.service';
-import { SeenJobsRepository } from './seen-jobs.repository';
 
 @Injectable()
-export class SchedulerService implements OnModuleInit {
+export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
   private seenJobIds = new Set<string>();
 
   constructor(
     private readonly linkedinService: LinkedinService,
     private readonly emailService: EmailService,
-    private readonly seenJobsRepo: SeenJobsRepository,
   ) {}
-
-  async onModuleInit() {
-    this.seenJobIds = await this.seenJobsRepo.loadAll();
-    this.logger.log(`${this.seenJobIds.size} IDs chargés depuis PostgreSQL`);
-  }
 
   @Cron('0 */15 * * * *')
   async checkNewJobs(): Promise<void> {
@@ -36,9 +29,7 @@ export class SchedulerService implements OnModuleInit {
 
     try {
       await this.emailService.sendJobNotification(newJobs);
-      const newIds = newJobs.map((job) => job.id);
-      newIds.forEach((id) => this.seenJobIds.add(id));
-      await this.seenJobsRepo.saveMany(newIds);
+      newJobs.forEach((job) => this.seenJobIds.add(job.id));
       this.logger.log(`Total suivi : ${this.seenJobIds.size} IDs`);
     } catch (error: any) {
       this.logger.error(`Erreur notification : ${error?.message}`);
