@@ -1,31 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { LinkedinJob } from '../linkedin/linkedin.interface';
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
-  private transporter: nodemailer.Transporter;
+  private resend: Resend;
 
   constructor(private readonly configService: ConfigService) {
-    const smtpPort = parseInt(this.configService.get<string>('SMTP_PORT', '587'), 10);
-    this.transporter = nodemailer.createTransport({
-      host: this.configService.get<string>('SMTP_HOST'),
-      port: smtpPort,
-      secure: smtpPort === 465,
-      family: 4,
-      auth: {
-        user: this.configService.get<string>('SMTP_USER'),
-        pass: this.configService.get<string>('SMTP_PASS'),
-      },
-      connectionTimeout: 10000,
-      socketTimeout: 10000,
-    } as any);
+    this.resend = new Resend(this.configService.get<string>('RESEND_API_KEY'));
   }
 
   async sendJobNotification(jobs: LinkedinJob[]): Promise<void> {
     const to = this.configService.get<string>('NOTIFY_EMAIL');
+    const from = this.configService.get<string>('RESEND_FROM', 'onboarding@resend.dev');
     const keywords = this.configService.get<string>('SEARCH_KEYWORDS');
     const location = this.configService.get<string>('SEARCH_LOCATION');
 
@@ -35,17 +24,16 @@ export class EmailService {
     }
 
     const subject = `[LinkedIn] ${jobs.length} nouvelle(s) offre(s) — ${keywords} à ${location}`;
-
     const html = this.buildEmailHtml(jobs, keywords, location);
-    const text = this.buildEmailText(jobs);
 
-    try {
-      await this.transporter.sendMail({ from: this.configService.get<string>('SMTP_USER'), to, subject, html, text });
-      this.logger.log(`Email envoyé à ${to} avec ${jobs.length} offre(s)`);
-    } catch (error: any) {
-      this.logger.error(`Échec de l'envoi email: ${error?.message}`);
-      throw error;
+    const { error } = await this.resend.emails.send({ from, to, subject, html });
+
+    if (error) {
+      this.logger.error(`Échec de l'envoi email: ${error.message}`);
+      throw new Error(error.message);
     }
+
+    this.logger.log(`Email envoyé à ${to} avec ${jobs.length} offre(s)`);
   }
 
   private buildEmailHtml(jobs: LinkedinJob[], keywords: string, location: string): string {
@@ -93,11 +81,5 @@ export class EmailService {
   </div>
 </body>
 </html>`;
-  }
-
-  private buildEmailText(jobs: LinkedinJob[]): string {
-    return jobs
-      .map((job) => `${job.title} — ${job.company} (${job.location})\n${job.url}`)
-      .join('\n\n');
   }
 }
